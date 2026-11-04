@@ -1,296 +1,905 @@
-
 import os
 import json
+import random
 import subprocess
+from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
-W, H = 1280, 720
-OUT = "output"
-os.makedirs(OUT, exist_ok=True)
+# ==========================================
+# ALEX'S STORY WORLD - CARTOON RENDERER V2
+# ==========================================
 
-def run(cmd):
-    subprocess.run(cmd, check=True)
+WIDTH = 1280
+HEIGHT = 720
+FPS = 24
+
+OUTPUT = Path("output")
+OUTPUT.mkdir(exist_ok=True)
+
+# ==========================================
+# FONT
+# ==========================================
 
 def get_font(size, bold=False):
-    path = (
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-        if bold else
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-    )
-    return ImageFont.truetype(path, size)
+    if bold:
+        path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+    else:
+        path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 
-def draw_scene(index, total, text, hero, friend):
-    colors = [
-        ("#91d7f2", "#74bd69"),
-        ("#a6c8ff", "#6cbf84"),
-        ("#f5c6aa", "#86c5a5"),
-        ("#b9a7e8", "#6cae75"),
-        ("#8ed1c6", "#7ab66d")
-    ]
+    if os.path.exists(path):
+        return ImageFont.truetype(path, size)
 
-    sky, grass = colors[index % len(colors)]
+    return ImageFont.load_default()
 
-    img = Image.new("RGB", (W, H), sky)
-    d = ImageDraw.Draw(img)
 
-    # Matahari
-    d.ellipse((1010, 55, 1135, 180), fill="#ffe08a")
+# ==========================================
+# FFMPEG HELPER
+# ==========================================
 
-    # Awan
-    for x, y in [(130, 110), (430, 75), (800, 145)]:
-        d.ellipse((x, y, x+120, y+48), fill="white")
-        d.ellipse((x+35, y-22, x+100, y+50), fill="white")
+def run(command):
+    subprocess.run(command, check=True)
 
-    # Bukit dan tanah
-    d.ellipse((-180, 390, 620, 850), fill=grass)
-    d.ellipse((430, 370, 1320, 850), fill="#5eaa69")
-    d.rectangle((0, 560, W, H), fill="#e7c78d")
 
-    # Rumah
-    for x, col in [(80, "#f28b75"), (1020, "#f4a261")]:
-        d.rectangle((x, 390, x+190, 565), fill=col)
-        d.polygon(
-            [(x-20, 395), (x+95, 300), (x+210, 395)],
-            fill="#8d5544"
-        )
-        d.rectangle((x+72, 465, x+120, 565), fill="#704c3b")
+def get_duration(audio):
+    result = subprocess.check_output([
+        "ffprobe",
+        "-v", "error",
+        "-show_entries", "format=duration",
+        "-of", "default=noprint_wrappers=1:nokey=1",
+        str(audio)
+    ], text=True)
 
-    # Pohon
-    for x in [260, 900]:
-        d.rectangle((x, 390, x+25, 555), fill="#805438")
-        d.ellipse((x-50, 320, x+75, 440), fill="#398b55")
+    return float(result.strip()) + 0.5
 
-    # Karakter kartun
-    def character(cx, cy, shirt, name):
-        # Kepala
-        d.ellipse(
-            (cx-43, cy-110, cx+43, cy-24),
-            fill="#f2c49b",
-            outline="#4c3b32",
-            width=4
-        )
 
-        # Mata
-        d.ellipse((cx-18, cy-78, cx-9, cy-68), fill="black")
-        d.ellipse((cx+9, cy-78, cx+18, cy-68), fill="black")
+# ==========================================
+# TEXT WRAPPER
+# ==========================================
 
-        # Senyum
-        d.arc(
-            (cx-20, cy-76, cx+20, cy-42),
-            10, 170,
-            fill="#5a352c",
-            width=4
-        )
-
-        # Badan
-        d.rounded_rectangle(
-            (cx-48, cy-25, cx+48, cy+105),
-            radius=22,
-            fill=shirt,
-            outline="#4c3b32",
-            width=4
-        )
-
-        # Kaki
-        d.line(
-            (cx-28, cy+105, cx-38, cy+165),
-            fill="#394b59",
-            width=15
-        )
-        d.line(
-            (cx+28, cy+105, cx+38, cy+165),
-            fill="#394b59",
-            width=15
-        )
-
-        # Tangan
-        d.line(
-            (cx-45, cy+8, cx-82, cy+58),
-            fill="#f2c49b",
-            width=13
-        )
-        d.line(
-            (cx+45, cy+8, cx+82, cy+58),
-            fill="#f2c49b",
-            width=13
-        )
-
-        d.text(
-            (cx-45, cy+175),
-            name,
-            font=get_font(22, True),
-            fill="#24323a"
-        )
-
-    character(520, 430, "#ef6a6a", hero)
-    character(700, 430, "#477bd1", friend)
-
-    # Label adegan
-    d.rounded_rectangle(
-        (55, 35, 650, 95),
-        radius=18,
-        fill="white"
-    )
-
-    d.text(
-        (78, 50),
-        f"ALEX'S STORY WORLD | ADEGAN {index+1}/{total}",
-        font=get_font(23, True),
-        fill="#263238"
-    )
-
-    # Kotak narasi
-    d.rounded_rectangle(
-        (55, 590, 1225, 690),
-        radius=22,
-        fill="white"
-    )
-
+def wrap_text(draw, text, font, max_width):
     words = text.split()
+
     lines = []
-    line = ""
+    current = ""
 
     for word in words:
-        test = (line + " " + word).strip()
 
-        if d.textbbox((0, 0), test, font=get_font(24))[2] > 1110:
-            lines.append(line)
-            line = word
+        test = (current + " " + word).strip()
+
+        width = draw.textbbox(
+            (0, 0),
+            test,
+            font=font
+        )[2]
+
+        if width <= max_width:
+            current = test
         else:
-            line = test
+            if current:
+                lines.append(current)
 
-    if line:
-        lines.append(line)
+            current = word
 
-    y = 607
+    if current:
+        lines.append(current)
 
-    for ln in lines[:3]:
-        d.text(
-            (82, y),
-            ln,
-            font=get_font(23),
-            fill="#263238"
+    return lines
+
+
+# ==========================================
+# BACKGROUND
+# ==========================================
+
+def draw_background(draw, scene_type, index):
+
+    sky_top = (120, 190, 235)
+    sky_bottom = (225, 242, 247)
+
+    for y in range(HEIGHT):
+
+        ratio = y / HEIGHT
+
+        color = tuple(
+            int(sky_top[i] * (1 - ratio) +
+                sky_bottom[i] * ratio)
+            for i in range(3)
         )
-        y += 30
 
-    return img
+        draw.line(
+            (0, y, WIDTH, y),
+            fill=color
+        )
+
+    # Matahari
+    draw.ellipse(
+        (1040, 55, 1155, 170),
+        fill="#ffdb70"
+    )
+
+    # Awan
+    for x, y in [(100, 100), (780, 120)]:
+
+        draw.ellipse(
+            (x, y + 15, x + 100, y + 60),
+            fill="white"
+        )
+
+        draw.ellipse(
+            (x + 25, y, x + 80, y + 60),
+            fill="white"
+        )
+
+        draw.ellipse(
+            (x + 55, y + 15, x + 125, y + 60),
+            fill="white"
+        )
+
+    # Tanah
+    draw.rectangle(
+        (0, 530, WIDTH, HEIGHT),
+        fill="#78b978"
+    )
+
+    # Bukit
+    draw.ellipse(
+        (-150, 390, 600, 760),
+        fill="#6aaf75"
+    )
+
+    draw.ellipse(
+        (550, 400, 1450, 780),
+        fill="#559e65"
+    )
+
+    if scene_type == "river":
+
+        draw.rectangle(
+            (0, 430, WIDTH, 570),
+            fill="#55b6d5"
+        )
+
+        for y in [460, 505, 545]:
+
+            for x in range(30, WIDTH, 160):
+
+                draw.arc(
+                    (x, y, x + 90, y + 25),
+                    0, 180,
+                    fill="#d9f5ff",
+                    width=4
+                )
+
+        # Sampah jika ada di naskah
+        if index % 2 == 0:
+
+            for x, y in [(400, 480), (800, 525)]:
+
+                draw.rectangle(
+                    (x, y, x + 38, y + 24),
+                    fill="#f3a65a",
+                    outline="#6b4934",
+                    width=2
+                )
+
+    elif scene_type == "library":
+
+        draw.rectangle(
+            (110, 190, 1170, 550),
+            fill="#a56d45",
+            outline="#5a4030",
+            width=7
+        )
+
+        for y in [285, 390, 495]:
+
+            draw.rectangle(
+                (140, y, 1140, y + 15),
+                fill="#f1d49b"
+            )
+
+            for x in range(170, 1100, 80):
+
+                color = random.choice([
+                    "#d86f5d",
+                    "#e6bb55",
+                    "#6c9cbd",
+                    "#8b78bd"
+                ])
+
+                draw.rectangle(
+                    (x, y - 65, x + 48, y),
+                    fill=color,
+                    outline="#543c33",
+                    width=2
+                )
+
+    elif scene_type == "mystery":
+
+        # Kotak misterius
+        draw.rounded_rectangle(
+            (500, 390, 790, 590),
+            radius=20,
+            fill="#a96f42",
+            outline="#533c2e",
+            width=8
+        )
+
+        draw.rectangle(
+            (620, 390, 670, 590),
+            fill="#e4bd65"
+        )
+
+        draw.ellipse(
+            (625, 465, 665, 505),
+            fill="#f9df86",
+            outline="#533c2e",
+            width=3
+        )
+
+    elif scene_type == "bird":
+
+        # Pohon tempat burung
+        draw.rectangle(
+            (990, 310, 1020, 570),
+            fill="#80543c"
+        )
+
+        draw.ellipse(
+            (900, 250, 1100, 410),
+            fill="#3e8c59"
+        )
+
+        # Burung
+        draw.ellipse(
+            (1040, 280, 1100, 330),
+            fill="#e6a84c",
+            outline="#5a4632",
+            width=3
+        )
+
+        draw.ellipse(
+            (1080, 290, 1090, 300),
+            fill="black"
+        )
+
+        draw.polygon(
+            [(1100, 300), (1125, 310), (1100, 318)],
+            fill="#ed8a43"
+        )
+
+    else:
+
+        # Rumah desa
+        draw_house(
+            draw,
+            90,
+            320,
+            "#f1a17e"
+        )
+
+        draw_house(
+            draw,
+            1000,
+            340,
+            "#f3cf77"
+        )
 
 
-def make_audio(text, path):
+# ==========================================
+# HOUSE
+# ==========================================
+
+def draw_house(draw, x, y, color):
+
+    draw.rectangle(
+        (x, y + 65, x + 170, y + 190),
+        fill=color,
+        outline="#634b45",
+        width=4
+    )
+
+    draw.polygon(
+        [
+            (x - 15, y + 70),
+            (x + 85, y),
+            (x + 185, y + 70)
+        ],
+        fill="#8e594d",
+        outline="#634b45"
+    )
+
+    draw.rectangle(
+        (x + 68, y + 115, x + 110, y + 190),
+        fill="#80543c",
+        outline="#634b45",
+        width=3
+    )
+
+    draw.rectangle(
+        (x + 20, y + 90, x + 55, y + 130),
+        fill="#bfe8f4",
+        outline="#634b45",
+        width=3
+    )
+
+    draw.rectangle(
+        (x + 125, y + 90, x + 155, y + 130),
+        fill="#bfe8f4",
+        outline="#634b45",
+        width=3
+    )
+
+
+# ==========================================
+# CHARACTER DESIGN
+# ==========================================
+
+def draw_character(
+    draw,
+    x,
+    y,
+    name,
+    shirt,
+    hair,
+    accessory
+):
+
+    skin = "#f2c49b"
+
+    # Bayangan
+    draw.ellipse(
+        (x - 55, y + 174, x + 55, y + 198),
+        fill="#52705a"
+    )
+
+    # Kaki
+    draw.line(
+        (x - 20, y + 128, x - 27, y + 180),
+        fill="#344054",
+        width=17
+    )
+
+    draw.line(
+        (x + 20, y + 128, x + 27, y + 180),
+        fill="#344054",
+        width=17
+    )
+
+    # Sepatu
+    draw.ellipse(
+        (x - 48, y + 169, x - 8, y + 190),
+        fill="#29364b"
+    )
+
+    draw.ellipse(
+        (x + 8, y + 169, x + 48, y + 190),
+        fill="#29364b"
+    )
+
+    # Badan
+    draw.rounded_rectangle(
+        (x - 54, y + 55, x + 54, y + 145),
+        radius=28,
+        fill=shirt,
+        outline="#29364b",
+        width=4
+    )
+
+    # Tangan
+    draw.line(
+        (x - 43, y + 75, x - 76, y + 128),
+        fill=shirt,
+        width=20
+    )
+
+    draw.line(
+        (x + 43, y + 75, x + 76, y + 128),
+        fill=shirt,
+        width=20
+    )
+
+    draw.ellipse(
+        (x - 85, y + 119, x - 67, y + 137),
+        fill=skin
+    )
+
+    draw.ellipse(
+        (x + 67, y + 119, x + 85, y + 137),
+        fill=skin
+    )
+
+    # Leher
+    draw.rectangle(
+        (x - 14, y + 40, x + 14, y + 67),
+        fill=skin
+    )
+
+    # Kepala
+    draw.ellipse(
+        (x - 48, y - 20, x + 48, y + 75),
+        fill=skin,
+        outline="#29364b",
+        width=4
+    )
+
+    # Rambut
+    draw.pieslice(
+        (x - 51, y - 30, x + 51, y + 48),
+        180,
+        360,
+        fill=hair,
+        outline="#29364b",
+        width=3
+    )
+
+    draw.ellipse(
+        (x - 49, y + 1, x - 26, y + 32),
+        fill=hair
+    )
+
+    # Alis
+    draw.line(
+        (x - 27, y + 20, x - 12, y + 17),
+        fill="#382b29",
+        width=4
+    )
+
+    draw.line(
+        (x + 12, y + 17, x + 27, y + 20),
+        fill="#382b29",
+        width=4
+    )
+
+    # Mata
+    draw.ellipse(
+        (x - 24, y + 25, x - 13, y + 39),
+        fill="#222222"
+    )
+
+    draw.ellipse(
+        (x + 13, y + 25, x + 24, y + 39),
+        fill="#222222"
+    )
+
+    # Senyum
+    draw.arc(
+        (x - 17, y + 35, x + 17, y + 58),
+        5,
+        175,
+        fill="#9c4e45",
+        width=3
+    )
+
+    # Aksesori pembeda
+    if accessory == "cap":
+
+        draw.arc(
+            (x - 45, y - 25, x + 45, y + 28),
+            180,
+            360,
+            fill="#f5d36d",
+            width=15
+        )
+
+        draw.line(
+            (x - 45, y + 2, x + 45, y + 2),
+            fill="#f5d36d",
+            width=8
+        )
+
+    elif accessory == "bow":
+
+        draw.polygon(
+            [
+                (x - 45, y - 8),
+                (x - 68, y - 22),
+                (x - 65, y + 4)
+            ],
+            fill="#f06f9b"
+        )
+
+        draw.polygon(
+            [
+                (x - 45, y - 8),
+                (x - 23, y - 22),
+                (x - 25, y + 4)
+            ],
+            fill="#f06f9b"
+        )
+
+    # Label nama
+    draw.rounded_rectangle(
+        (x - 62, y + 202, x + 62, y + 236),
+        radius=12,
+        fill="#fff7e8",
+        outline="#29364b",
+        width=2
+    )
+
+    label_font = get_font(16, True)
+
+    text_width = draw.textbbox(
+        (0, 0),
+        name,
+        font=label_font
+    )[2]
+
+    draw.text(
+        (x - text_width / 2, y + 208),
+        name,
+        font=label_font,
+        fill="#263044"
+    )
+
+
+# ==========================================
+# DETECT SCENE FROM STORY
+# ==========================================
+
+def detect_scene(text, index):
+
+    text = text.lower()
+
+    if any(word in text for word in [
+        "sungai", "air", "sampah", "bersih"
+    ]):
+        return "river"
+
+    if any(word in text for word in [
+        "burung", "sarang", "hewan"
+    ]):
+        return "bird"
+
+    if any(word in text for word in [
+        "kotak", "misteri", "pesan"
+    ]):
+        return "mystery"
+
+    if any(word in text for word in [
+        "perpustakaan", "buku", "peta"
+    ]):
+        return "library"
+
+    return "village"
+
+
+# ==========================================
+# BUILD SCENE
+# ==========================================
+
+def create_scene(
+    text,
+    index,
+    total,
+    hero,
+    friend
+):
+
+    random.seed(index + 100)
+
+    image = Image.new(
+        "RGB",
+        (WIDTH, HEIGHT)
+    )
+
+    draw = ImageDraw.Draw(image)
+
+    scene_type = detect_scene(text, index)
+
+    draw_background(
+        draw,
+        scene_type,
+        index
+    )
+
+    # Header
+    draw.rounded_rectangle(
+        (35, 25, 850, 82),
+        radius=16,
+        fill="#fffaf0",
+        outline="#263044",
+        width=2
+    )
+
+    draw.text(
+        (58, 40),
+        f"ALEX'S STORY WORLD  |  ADEGAN {index + 1}/{total}",
+        font=get_font(23, True),
+        fill="#263044"
+    )
+
+    # Karakter utama
+    draw_character(
+        draw,
+        470,
+        300,
+        hero,
+        "#ed6b62",
+        "#50362f",
+        "cap"
+    )
+
+    draw_character(
+        draw,
+        700,
+        300,
+        friend,
+        "#4d85d8",
+        "#3d302b",
+        "bow"
+    )
+
+    # Narasi
+    draw.rounded_rectangle(
+        (35, 600, 1245, 695),
+        radius=20,
+        fill="#fffaf0",
+        outline="#263044",
+        width=2
+    )
+
+    lines = wrap_text(
+        draw,
+        text,
+        get_font(22, True),
+        1140
+    )
+
+    for i, line in enumerate(lines[:2]):
+
+        draw.text(
+            (65, 617 + i * 31),
+            line,
+            font=get_font(22, True),
+            fill="#263044"
+        )
+
+    # Nomor adegan
+    draw.ellipse(
+        (1160, 105, 1220, 165),
+        fill="#fffaf0",
+        outline="#263044",
+        width=3
+    )
+
+    draw.text(
+        (1178, 120),
+        str(index + 1),
+        font=get_font(25, True),
+        fill="#263044"
+    )
+
+    return image
+
+
+# ==========================================
+# RENDER ONE SCENE
+# ==========================================
+
+def render_clip(
+    image_path,
+    audio_path,
+    output_path,
+    duration,
+    index
+):
+
+    frames = max(
+        FPS,
+        int(duration * FPS)
+    )
+
+    if index % 2 == 0:
+        zoom = "min(zoom+0.00045,1.055)"
+    else:
+        zoom = "min(zoom+0.00035,1.045)"
+
+    video_filter = (
+        "scale=1408:792,"
+        f"zoompan=z='{zoom}':"
+        f"d={frames}:"
+        "x='iw/2-(iw/zoom/2)':"
+        "y='ih/2-(ih/zoom/2)':"
+        f"s={WIDTH}x{HEIGHT}:"
+        f"fps={FPS},"
+        "format=yuv420p"
+    )
+
     run([
-        "espeak-ng",
-        "-v", "id",
-        "-s", "145",
-        "-a", "165",
-        "-w", path,
-        text
+        "ffmpeg",
+        "-y",
+        "-loglevel", "error",
+
+        "-loop", "1",
+        "-i", str(image_path),
+
+        "-i", str(audio_path),
+
+        "-vf", video_filter,
+
+        "-t", str(duration),
+        "-r", str(FPS),
+
+        "-c:v", "libx264",
+        "-preset", "medium",
+        "-crf", "21",
+
+        "-c:a", "aac",
+        "-b:a", "128k",
+
+        "-shortest",
+
+        str(output_path)
     ])
 
+
+# ==========================================
+# MAIN RENDER ENGINE
+# ==========================================
 
 def main():
-    with open("output/story.json", encoding="utf-8") as f:
-        story = json.load(f)
 
-    paragraphs = story["paragraphs"]
+    story_file = OUTPUT / "story.json"
 
-    # Storyboard
-    with open("output/storyboard.txt", "w", encoding="utf-8") as f:
-        f.write(story["title"] + "\n\n")
+    if not story_file.exists():
+        raise FileNotFoundError(
+            "output/story.json tidak ditemukan. Jalankan story_engine.py dahulu."
+        )
 
-        for i, paragraph in enumerate(paragraphs, 1):
-            f.write(f"ADEGAN {i:02d}\n")
-            f.write(paragraph + "\n\n")
+    with open(
+        story_file,
+        "r",
+        encoding="utf-8"
+    ) as file:
+
+        story = json.load(file)
+
+    paragraphs = story.get("paragraphs", [])
+
+    if not paragraphs:
+        raise ValueError(
+            "Naskah tidak memiliki bagian paragraphs."
+        )
+
+    hero = story.get("hero", "Alex")
+    friend = story.get("friend", "Luna")
+
+    title = story.get(
+        "title",
+        "Petualangan ALEX'S STORY WORLD"
+    )
 
     clips = []
+    storyboard = []
 
-    for i, paragraph in enumerate(paragraphs):
-        print(f"Membuat adegan {i+1}/{len(paragraphs)}")
+    total = len(paragraphs)
 
-        img = draw_scene(
-            i,
-            len(paragraphs),
+    for index, paragraph in enumerate(paragraphs):
+
+        print(
+            f"Membuat adegan {index + 1}/{total}"
+        )
+
+        image_file = OUTPUT / f"scene_{index:02d}.png"
+        audio_file = OUTPUT / f"voice_{index:02d}.wav"
+        clip_file = OUTPUT / f"clip_{index:02d}.mp4"
+
+        # Buat ilustrasi adegan
+        image = create_scene(
             paragraph,
-            story["hero"],
-            story["friend"]
+            index,
+            total,
+            hero,
+            friend
         )
 
-        image_path = f"output/scene_{i:02d}.png"
-        audio_path = f"output/voice_{i:02d}.wav"
-        clip_path = f"output/clip_{i:02d}.mp4"
+        image.save(image_file)
 
-        img.save(image_path)
-        make_audio(paragraph, audio_path)
-
-        duration = float(subprocess.check_output([
-            "ffprobe",
-            "-v", "error",
-            "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1",
-            audio_path
-        ], text=True).strip()) + 0.35
-
-        frames = max(1, int(duration * 24))
-
-        video_filter = (
-            f"scale=1360:765,"
-            f"zoompan=z='min(zoom+0.0005,1.06)':"
-            f"d={frames}:s=1280x720:fps=24,"
-            f"format=yuv420p"
-        )
-
+        # Buat narasi lokal
         run([
-            "ffmpeg", "-y",
-            "-loglevel", "error",
-            "-loop", "1",
-            "-i", image_path,
-            "-i", audio_path,
-            "-vf", video_filter,
-            "-t", str(duration),
-            "-r", "24",
-            "-c:v", "libx264",
-            "-preset", "ultrafast",
-            "-crf", "28",
-            "-c:a", "aac",
-            "-b:a", "96k",
-            "-shortest",
-            clip_path
+            "espeak-ng",
+            "-v", "id",
+            "-s", "138",
+            "-p", "48",
+            "-a", "165",
+            "-w", str(audio_file),
+            paragraph
         ])
 
-        clips.append(clip_path)
+        duration = get_duration(audio_file)
 
-    # Gabungkan semua adegan
-    with open("output/concat.txt", "w") as f:
+        # Render adegan dengan FFmpeg
+        render_clip(
+            image_file,
+            audio_file,
+            clip_file,
+            duration,
+            index
+        )
+
+        clips.append(clip_file)
+
+        storyboard.append(
+            f"ADEGAN {index + 1:02d}\n"
+            f"NARASI: {paragraph}\n"
+            f"VISUAL: {detect_scene(paragraph, index)}\n"
+        )
+
+    # Simpan storyboard
+    with open(
+        OUTPUT / "storyboard.txt",
+        "w",
+        encoding="utf-8"
+    ) as file:
+
+        file.write(title + "\n\n")
+
+        file.write(
+            "\n".join(storyboard)
+        )
+
+    # Gabungkan seluruh adegan
+    concat_file = OUTPUT / "concat.txt"
+
+    with open(
+        concat_file,
+        "w",
+        encoding="utf-8"
+    ) as file:
+
         for clip in clips:
-            f.write(f"file '{os.path.basename(clip)}'\n")
+
+            file.write(
+                f"file '{clip.name}'\n"
+            )
+
+    full_video = OUTPUT / "alex_story_world_full.mp4"
 
     run([
-        "ffmpeg", "-y",
+        "ffmpeg",
+        "-y",
         "-loglevel", "error",
+
         "-f", "concat",
         "-safe", "0",
-        "-i", "output/concat.txt",
+
+        "-i", str(concat_file),
+
         "-c", "copy",
-        "output/alex_story_world_full.mp4"
+
+        str(full_video)
     ])
 
-    # Shorts vertikal 25 detik dari video utama
+    # Buat video vertikal Shorts 25 detik
+    shorts_video = OUTPUT / "alex_story_world_shorts.mp4"
+
     run([
-        "ffmpeg", "-y",
+        "ffmpeg",
+        "-y",
         "-loglevel", "error",
-        "-ss", "0",
-        "-i", "output/alex_story_world_full.mp4",
+
+        "-i", str(full_video),
+
         "-t", "25",
+
         "-vf",
         "scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280",
+
         "-c:v", "libx264",
-        "-preset", "ultrafast",
-        "-crf", "28",
+        "-preset", "medium",
+        "-crf", "22",
+
         "-c:a", "aac",
-        "-b:a", "96k",
-        "output/alex_story_world_shorts.mp4"
+        "-b:a", "128k",
+
+        str(shorts_video)
     ])
 
-    print("SEMUA VIDEO BERHASIL DIBUAT!")
+    print("================================")
+    print("PRODUKSI VIDEO SELESAI")
+    print("Video utama:", full_video)
+    print("Video Shorts:", shorts_video)
+    print("================================")
 
 
 if __name__ == "__main__":
