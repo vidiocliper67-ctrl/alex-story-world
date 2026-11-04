@@ -1,14 +1,106 @@
-
 <!DOCTYPE html>
 <html lang="id">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ALEX'S STORY WORLD</title>
+
+  <script src="https://accounts.google.com/gsi/client"
+          async defer></script>
+
+  <style>
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: #101827;
+      color: white;
+      font-family: Arial, sans-serif;
+    }
+
+    .panel {
+      width: 85%;
+      max-width: 430px;
+      padding: 35px;
+      border-radius: 18px;
+      background: #1e293b;
+      text-align: center;
+      box-sizing: border-box;
+    }
+
+    button {
+      padding: 13px 22px;
+      border: 0;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: bold;
+    }
+
+    #status {
+      margin-top: 20px;
+      color: #a7f3d0;
+      overflow-wrap: anywhere;
+    }
+  </style>
 </head>
-<body style="background:#101522;color:white;text-align:center;font-family:Arial;padding:60px 20px">
-  <h1>ALEX'S STORY WORLD</h1>
-  <p>Browser-based story production studio.</p>
-  <p>Website berhasil dimuat.</p>
+
+<body>
+  <div class="panel">
+    <h1>ALEX'S STORY WORLD</h1>
+    <p>Browser-Based Story Production Studio</p>
+
+    <button id="loginButton" disabled onclick="loginGoogle()">
+      Memuat Google Login...
+    </button>
+
+    <p id="status">Menyiapkan koneksi Google...</p>
+  </div>
+
+  <script>
+    const CONFIG = {
+      CLIENT_ID: "632954912040-9ffmluogm43pjd45q6nrg2ifma1ceof1.apps.googleusercontent.com",
+      SCOPE: "https://www.googleapis.com/auth/youtube.upload"
+    };
+
+    let tokenClient;
+
+    window.onload = function () {
+      const check = setInterval(() => {
+        if (window.google?.accounts?.oauth2) {
+          clearInterval(check);
+
+          tokenClient = google.accounts.oauth2.initTokenClient({
+            client_id: CONFIG.CLIENT_ID,
+            scope: CONFIG.SCOPE,
+            callback: (response) => {
+              if (response.error) {
+                document.getElementById("status").textContent =
+                  "Login gagal: " + response.error;
+                return;
+              }
+
+              document.getElementById("status").textContent =
+                "Google berhasil terhubung. Izin upload telah diberikan.";
+
+              document.getElementById("loginButton").textContent =
+                "Google Terhubung";
+            }
+          });
+
+          document.getElementById("loginButton").disabled = false;
+          document.getElementById("loginButton").textContent =
+            "Hubungkan Akun Google";
+          document.getElementById("status").textContent =
+            "Siap menghubungkan akun Google.";
+        }
+      }, 300);
+    };
+
+    function loginGoogle() {
+      if (!tokenClient) return;
+      tokenClient.requestAccessToken();
+    }
+  </script>
 </body>
 </html>
